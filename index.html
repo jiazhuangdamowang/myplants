@@ -114,7 +114,8 @@ const PLANTS = [
  {id:"p01",name:"吊兰",kind:"grass",pot:["vase","#d8c7a6"],place:"室内",base:5,grp:"leafy",
   tip:"盆土表面 2cm 干了再浇，一次浇透。叶尖发焦多半是太干或水里盐分多。",thirsty:"叶片变软下垂、颜色发灰"},
  {id:"p02",name:"斑叶竹节秋海棠",kind:"begonia",pot:["taper","#4a4640","dots"],place:"室内",base:5,grp:"leafy",
-  tip:"怕积水也怕干透，表土干 1–2cm 就浇。叶面别喷水，容易长斑。",thirsty:"叶片下垂、边缘卷"},
+  cold:[{below:10,mult:3,min:14,note:"低于 10℃：保持盆土干燥，只在叶片明显发软时沿盆边少量给水"},{below:15,mult:1.5,note:"低于 15℃：严格控水，每次少量浇，不要浇透"}],
+  tip:"怕积水也怕干透，表土干 1–2cm 就浇。叶面别喷水，容易长斑。冬季低于 15℃ 严格控水，低于 10℃ 保持盆土干燥。",thirsty:"叶片下垂、边缘卷"},
  {id:"p03",name:"琴叶榕",kind:"fiddle",pot:["square","#f4f2ee"],place:"室内",base:7,grp:"leafy",
   tip:"喜光、怕频繁挪动。盆土干到一半再浇透；冬天宁干勿湿。",thirsty:"大叶片发软、微微下垂"},
  {id:"p04",name:"火焰酢浆草",kind:"oxalis",pot:["hex","#7fb9a0"],place:"阳台",base:1,fixed:true,grp:"leafy",unsure:true,
@@ -366,8 +367,11 @@ function interval(p, from=TODAY){
   const indoorT = o.t + (p.place==="室内"?5:3);   // 室内/封闭阳台比室外暖
   const tf=tempFactor(indoorT,p.grp), hf=humFactor(o.rh);
   const adj=state.adj[p.id]||0;
-  const n=p.fixed ? Math.max(1,p.base+adj) : Math.max(2, Math.round(p.base*tf*hf)+adj);
-  return {n, tf, hf, indoorT, o, adj};
+  let n=p.fixed ? Math.max(1,p.base+adj) : Math.max(2, Math.round(p.base*tf*hf)+adj);
+  let cold=null;
+  if(p.cold){ cold=p.cold.find(r=>indoorT<r.below)||null;
+    if(cold){ n=Math.max(cold.min||0, Math.round(n*cold.mult)); } }
+  return {n, tf, hf, indoorT, o, adj, cold};
 }
 function lastWater(p){const l=state.logs[p.id]||[];return l.length?l[l.length-1]:null;}
 function status(p){
@@ -472,7 +476,7 @@ function render(){
         <span class="pill ${s.code==="done"?"":s.code}">${s.label}</span>
         <div class="art" data-open="${p.id}">${art(p)}</div>
         <div class="name" data-open="${p.id}"><span class="no">${noOf(p)}</span><span class="nm">${nameOf(p)}</span></div>
-        <div class="meta">${p.place} · ${interval(p).n===1?"每天":`${p.fixed?"":"约"}每 ${interval(p).n} 天`}${p.range?` · ${p.range[0]}–${p.range[1]}℃`:""}${rangeWarn(p)?` <span style="color:var(--warn)">⚠</span>`:""}</div>
+        <div class="meta">${p.place} · ${interval(p).n===1?"每天":`${p.fixed?"":"约"}每 ${interval(p).n} 天`}${p.range?` · ${p.range[0]}–${p.range[1]}℃`:""}${rangeWarn(p)?` <span style="color:var(--warn)">⚠</span>`:""}${interval(p).cold?` <span style="color:var(--warn)">❄控水</span>`:""}</div>
         ${(()=>{const f=fertStatus(p);return ["due","done"].includes(f.code)?`<div class="fline ${f.code}" data-fz="${p.id}">🌱 ${f.label}${f.code==="due"?" · 点这里记录":""}</div>`:"";})()}
         <button class="btn-water ${s.code==="done"?"done":""}" data-w="${p.id}">${s.code==="done"?"✓ 浇好了":"💧 浇水"}</button>
       </div>`).join("")}
@@ -517,6 +521,12 @@ function weatherHint(){
   else t.push("这几天雨少一些，可以趁晴天开窗通风。");
   if(cold) t.push(`${parse(cold.d).getMonth()+1}/${parse(cold.d).getDate()} 起明显降温（最低 ${Math.round(cold.lo)}℃），阳台上的观音莲、竹芋、白掌夜里记得关窗或移进屋。`);
   PLANTS.forEach(p=>{const w=rangeWarn(p); if(w) t.push(`${noOf(p)} ${nameOf(p)}：${w}。`);});
+  PLANTS.filter(p=>p.cold).forEach(p=>{
+    const now=interval(p).cold;
+    if(now){ t.push(`${noOf(p)} ${nameOf(p)}：${now.note}。`); return; }
+    const d=FORECAST.days.find(x=>parse(x.d)>parse(ymd(TODAY)) && interval(p,parse(x.d)).cold);
+    if(d){ const c=interval(p,parse(d.d)).cold; t.push(`${noOf(p)} ${nameOf(p)}：约 ${parse(d.d).getMonth()+1}/${parse(d.d).getDate()} 起室内会降到 ${c.below}℃ 以下，开始${c.below===10?"保持盆土干燥":"严格控水"}。`); }
+  });
   return t.join("<br>");
 }
 
@@ -573,6 +583,7 @@ function openDetail(id){
     <div class="box">
       <b>${iv.n===1?"现在每天浇一次":`现在${p.fixed?"":"约"}每 ${iv.n} 天浇一次`}</b><br>
       ${p.fixed?`按你的习惯固定${p.base===1?"每天":` ${p.base} 天`}，不随天气变化${iv.adj?`（${iv.adj>0?"+":""}${iv.adj} 天手动微调）`:""}`:`基础 ${p.base} 天 × 气温系数 ${iv.tf.toFixed(2)}（${p.place}约 ${Math.round(iv.indoorT)}℃）× 湿度系数 ${iv.hf.toFixed(2)}（约 ${Math.round(iv.o.rh)}%）${iv.adj?` ${iv.adj>0?"+":""}${iv.adj} 天手动微调`:""}`}
+      ${iv.cold?`<br><span style="color:var(--warn)">❄ ${iv.cold.note}（${p.place}约 ${Math.round(iv.indoorT)}℃，间隔已拉长到 ${iv.n} 天）</span>`:(p.cold?`<br><span style="color:var(--soft)">冬季规则：${p.cold.map(r=>r.note).reverse().join("；")}</span>`:"")}
       ${p.range?`<br><b>适宜温度 ${p.range[0]}–${p.range[1]}℃</b>${rangeWarn(p)?`<br><span style="color:var(--warn)">⚠ ${rangeWarn(p)}</span>`:""}`:""}
       <div class="row" style="margin-top:8px">
         <button class="sbtn" id="adjm">提前 1 天</button><button class="sbtn" id="adjp">推后 1 天</button>
